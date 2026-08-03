@@ -159,6 +159,6 @@ class CommentAdmin(admin.ModelAdmin):
         self.message_user(request, f"{updated} comment(s) rejected.", messages.SUCCESS)
 
 
-admin.site.site_header = "Blog Studio Admin"
-admin.site.site_title = "Blog Studio"
+admin.site.site_header = "Admin Site"
+admin.site.site_title = "Rajkumar Official"
 admin.site.index_title = "Dashboard"

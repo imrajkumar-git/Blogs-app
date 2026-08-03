@@ -3,6 +3,7 @@ from django.db.models import Count, F
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from django.shortcuts import render
 
 from .models import Category, Comment, Post, Tag
 from .permissions import IsAuthorOrReadOnly
@@ -94,3 +95,8 @@ class CommentViewSet(viewsets.ModelViewSet):
         if post_slug:
             qs = qs.filter(post__slug=post_slug)
         return qs
+
+
+
+def home(request):
+    return render(request, 'index.html')
