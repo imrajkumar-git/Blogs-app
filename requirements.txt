@@ -15,8 +15,10 @@ dotenv==0.9.9
 enve==0.2.1
 filelock==3.29.0
 git-filter-repo==2.47.0
+gunicorn==26.0.0
 itsdangerous==2.2.0
 jmespath==1.1.0
+packaging==26.2
 pillow==12.2.0
 platformdirs==4.9.6
 psycopg==3.3.4
@@ -34,3 +36,4 @@ tzdata==2026.2
 urllib3==2.7.0
 virtualenv==21.3.3
 virtualenvwrapper-win==1.2.7
+whitenoise==6.12.0
