@@ -59,7 +59,7 @@ ROOT_URLCONF = "core.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        'DIRS': [os.path.join(BASE_DIR,'Templates')],
+        'DIRS': [os.path.join(BASE_DIR,'templates')],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -80,7 +80,7 @@ ASGI_APPLICATION = "core.asgi.application"
 # ---------------------------------------------------------------------------
 DATABASES = {
     "default": dj_database_url.parse(
-        "postgresql://neondb_owner:npg_J8TMjAzHeE7I@ep-soft-morning-ayzxoo79-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+        "postgresql://neondb_owner:npg_epMDK2t4SUdV@ep-lucky-river-ayx06o8y-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
     )
 }
 # ---------------------------------------------------------------------------
