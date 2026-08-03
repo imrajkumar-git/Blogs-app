@@ -49,7 +49,10 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
 ]
+
 
 ROOT_URLCONF = "core.urls"
 
@@ -106,15 +109,21 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 # ---------------------------------------------------------------------------
 # CORS — allow the Next.js frontend to talk to the API
 # ---------------------------------------------------------------------------
-CORS_ALLOWED_ORIGINS = os.getenv(
-    "CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://192.168.0.103:3000"
-).split(",")
+cors_origins = os.getenv(
+    "CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://192.168.0.103:3000,https://backend.onrender.com,"
+)
 CORS_ALLOW_CREDENTIALS = True
 
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in cors_origins.split(",")
+    if origin.strip()
+]
 # ---------------------------------------------------------------------------
 # Django REST Framework
 # ---------------------------------------------------------------------------
