@@ -1,102 +1,94 @@
-import django_filters
-from django.db.models import Count, F
-from rest_framework import permissions, viewsets
+from django.db.models import Q
+from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAuthenticated
 from rest_framework.response import Response
-from django.shortcuts import render
 
-from .models import Category, Comment, Post, Tag
-from .permissions import IsAuthorOrReadOnly
+from accounts.api_permissions import IsOwnerOrAdminOrReadOnly, IsVerifiedUser
+
+from .models import Post, Comment, Like
 from .serializers import (
-    CategorySerializer,
-    CommentSerializer,
-    PostDetailSerializer,
     PostListSerializer,
+    PostDetailSerializer,
     PostWriteSerializer,
-    TagSerializer,
+    CommentSerializer,
 )
-
-
-class PostFilter(django_filters.FilterSet):
-    category = django_filters.CharFilter(field_name="category__slug")
-    tag = django_filters.CharFilter(field_name="tags__slug")
-
-    class Meta:
-        model = Post
-        fields = ["category", "tag", "is_featured", "status"]
 
 
 class PostViewSet(viewsets.ModelViewSet):
     """
-    Public: list & retrieve published posts.
-    Authenticated authors: create/update/delete their own posts.
+    Public read access to published posts. Creating a post requires a
+    verified, logged-in user; editing/deleting requires being the author
+    or an admin.
     """
-
-    queryset = Post.objects.select_related("author", "category").prefetch_related("tags")
     lookup_field = "slug"
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsAuthorOrReadOnly]
-    filterset_class = PostFilter
-    search_fields = ["title", "excerpt", "content"]
-    ordering_fields = ["published_at", "created_at", "views_count", "title"]
-    ordering = ["-published_at"]
-
-    def get_queryset(self):
-        qs = super().get_queryset()
-        if self.request.user.is_staff:
-            return qs
-        return qs.filter(status=Post.Status.PUBLISHED)
+    permission_classes = [IsAuthenticatedOrReadOnly, IsVerifiedUser, IsOwnerOrAdminOrReadOnly]
+    # MultiPart/Form parsers let authors upload a cover image straight from
+    # their device; JSON still works for clients that only send text.
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_serializer_class(self):
-        if self.action in ("list",):
+        if self.action == "list":
             return PostListSerializer
-        if self.action in ("create", "update", "partial_update"):
-            return PostWriteSerializer
-        return PostDetailSerializer
-
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        Post.objects.filter(pk=instance.pk).update(views_count=F("views_count") + 1)
-        instance.refresh_from_db(fields=["views_count"])
-        serializer = self.get_serializer(instance)
-        return Response(serializer.data)
-
-    @action(detail=False, methods=["get"])
-    def featured(self, request):
-        qs = self.get_queryset().filter(is_featured=True)[:5]
-        serializer = PostListSerializer(qs, many=True, context={"request": request})
-        return Response(serializer.data)
-
-
-class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Category.objects.annotate(post_count=Count("posts")).order_by("name")
-    serializer_class = CategorySerializer
-    lookup_field = "slug"
-    permission_classes = [permissions.AllowAny]
-
-
-class TagViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Tag.objects.all()
-    serializer_class = TagSerializer
-    lookup_field = "slug"
-    permission_classes = [permissions.AllowAny]
-
-
-class CommentViewSet(viewsets.ModelViewSet):
-    """Anyone can submit a comment; it stays hidden until approved in the admin."""
-
-    queryset = Comment.objects.all()
-    serializer_class = CommentSerializer
-    http_method_names = ["get", "post", "head", "options"]
-    permission_classes = [permissions.AllowAny]
+        if self.action == "retrieve":
+            return PostDetailSerializer
+        return PostWriteSerializer
 
     def get_queryset(self):
-        qs = super().get_queryset().filter(is_approved=True)
-        post_slug = self.request.query_params.get("post_slug")
-        if post_slug:
-            qs = qs.filter(post__slug=post_slug)
-        return qs
+        qs = Post.objects.select_related("author").prefetch_related("likes", "comments__user")
+        user = self.request.user
+        if user.is_authenticated:
+            if user.is_staff:
+                return qs
+            # Everyone sees published posts; authors additionally see their own drafts.
+            return qs.filter(Q(is_published=True) | Q(author=user))
+        return qs.filter(is_published=True)
+
+    def perform_create(self, serializer):
+        serializer.save(author=self.request.user)
+
+    def perform_destroy(self, instance):
+        # Remove the uploaded file along with the post.
+        if instance.cover_image:
+            instance.cover_image.delete(save=False)
+        instance.delete()
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def like(self, request, slug=None):
+        """Toggle a like on this post for the current user."""
+        post = self.get_object()
+        like, created = Like.objects.get_or_create(post=post, user=request.user)
+        if not created:
+            like.delete()
+            liked = False
+        else:
+            liked = True
+        return Response({"liked": liked, "likes_count": post.likes.count()})
+
+    @action(
+        detail=True,
+        methods=["get", "post"],
+        permission_classes=[IsAuthenticatedOrReadOnly, IsVerifiedUser],
+        url_path="comments",
+    )
+    def comments(self, request, slug=None):
+        """GET: list comments on this post. POST: add a comment (verified users only)."""
+        post = self.get_object()
+        if request.method == "GET":
+            serializer = CommentSerializer(
+                post.comments.select_related("user"), many=True
+            )
+            return Response(serializer.data)
+
+        serializer = CommentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(post=post, user=request.user)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
-
-def home(request):
-    return render(request, 'index.html')
+class CommentDeleteView(generics.DestroyAPIView):
+    """Delete a single comment — only its author or an admin may do this."""
+    queryset = Comment.objects.all()
+    serializer_class = CommentSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrAdminOrReadOnly]

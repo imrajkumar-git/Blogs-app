@@ -1,26 +1,28 @@
 """
-Django settings for the Blog API project.
+Django settings for the auth backend (JWT + Email OTP).
 """
 import os
 from pathlib import Path
-from dotenv import load_dotenv
-import os
-import dj_database_url
-
-load_dotenv()
+from datetime import timedelta
+from decouple import config, Csv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-insecure-secret-key-change-me")
-DEBUG = os.getenv("DEBUG", "True") == "True"
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "127.0.0.1,blogs-app-2-1vza.onrender.com").split(",")
+SECRET_KEY = config("SECRET_KEY", default="dev-secret-key-change-me")
+DEBUG = os.environ.get("DEBUG", "False") == "True"
+ALLOWED_HOSTS = config(
+    "ALLOWED_HOSTS",
+    default="192.168.0.120, .onrender.com, .railway.app, localhost,",
+    cast=Csv(),
+)
 
-# ---------------------------------------------------------------------------
-# Applications
-# ---------------------------------------------------------------------------
+FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000")
+
+# Base URL used when building links inside emails (e.g. a "click to verify"
+# link, if you add one later). Falls back to FRONTEND_URL if not set.
+EMAIL_PAGE_DOMAIN = config("EMAIL_PAGE_DOMAIN", default=FRONTEND_URL)
+
 INSTALLED_APPS = [
-    # Jazzmin must be listed before django.contrib.admin to skin it
-    "jazzmin",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -28,16 +30,13 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
 
-    # Third party
     "rest_framework",
     "rest_framework_simplejwt",
-    "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
-    "django_filters",
 
-    # Local
     "accounts",
     "blog",
+    "reviews",
 ]
 
 MIDDLEWARE = [
@@ -49,17 +48,14 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
 ]
-
 
 ROOT_URLCONF = "core.urls"
 
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        'DIRS': [os.path.join(BASE_DIR,'Templates')],
+        "DIRS": [],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -73,157 +69,128 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = "core.wsgi.application"
-ASGI_APPLICATION = "core.asgi.application"
 
-# ---------------------------------------------------------------------------
-# Database (SQLite by default — swap for Postgres in production)
-# ---------------------------------------------------------------------------
+# Database credentials come from the environment. Set DB_ENGINE=sqlite in
+# .env to develop against a local file instead of the hosted Postgres.
 DATABASES = {
-    "default": dj_database_url.parse(
-        "postgresql://neondb_owner:npg_epMDK2t4SUdV@ep-lucky-river-ayx06o8y-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
-    )
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": "neondb",
+        "USER": "neondb_owner",
+        "PASSWORD": "npg_4YDBNQ0hylng",
+        "HOST": "ep-long-water-aencaknp-pooler.c-2.us-east-2.aws.neon.tech",
+        "HOST":"ep-bold-waterfall-b49heore-pooler.c-6.us-east-2.aws.neon.tech",
+        "PORT": "5432",
+        "OPTIONS": {
+            "sslmode": "require",
+            "channel_binding": "require",
+        },
+    }
 }
-# ---------------------------------------------------------------------------
-# Password validation
-# ---------------------------------------------------------------------------
+# else:
+#     DATABASES = {
+#         "default": {
+#             "ENGINE": "django.db.backends.postgresql",
+#             "NAME": config("DB_NAME", default="neondb"),
+#             "USER": config("DB_USER", default=""),
+#             "PASSWORD": config("DB_PASSWORD", default=""),
+#             "HOST": config("DB_HOST", default=""),
+#             "PORT": config("DB_PORT", default="5432"),
+#             "OPTIONS": {
+#                 "sslmode": config("DB_SSLMODE", default="require"),
+#             },
+#         }
+#     }
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 8}},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
+
+AUTH_USER_MODEL = "accounts.User"
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
-# ---------------------------------------------------------------------------
-# Static & media files
-# ---------------------------------------------------------------------------
 STATIC_URL = "static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_DIRS = [BASE_DIR / "static"]
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+# ---------------- Uploads ----------------
+# Largest cover image a blog author may upload, in bytes (default 5MB).
+BLOG_COVER_MAX_BYTES = config("BLOG_COVER_MAX_BYTES", default=5 * 1024 * 1024, cast=int)
+# Anything above this is streamed to a temp file rather than held in memory.
+FILE_UPLOAD_MAX_MEMORY_SIZE = 2 * 1024 * 1024
+DATA_UPLOAD_MAX_MEMORY_SIZE = BLOG_COVER_MAX_BYTES + (1024 * 1024)
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
-# ---------------------------------------------------------------------------
-# CORS — allow the Next.js frontend to talk to the API
-# ---------------------------------------------------------------------------
-cors_origins = os.getenv(
-    "CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://192.168.0.103:3000,https://backend.onrender.com,"
-)
-CORS_ALLOW_CREDENTIALS = True
-
-CORS_ALLOWED_ORIGINS = [
-    origin.strip()
-    for origin in cors_origins.split(",")
-    if origin.strip()
-]
-# ---------------------------------------------------------------------------
-# Django REST Framework
-# ---------------------------------------------------------------------------
+# ---------------- REST FRAMEWORK ----------------
 REST_FRAMEWORK = {
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
-    "PAGE_SIZE": 6,
-    "DEFAULT_FILTER_BACKENDS": [
-        "django_filters.rest_framework.DjangoFilterBackend",
-        "rest_framework.filters.SearchFilter",
-        "rest_framework.filters.OrderingFilter",
-    ],
-    "DEFAULT_AUTHENTICATION_CLASSES": [
+    "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
-        "rest_framework.authentication.SessionAuthentication",
-    ],
-    "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticatedOrReadOnly",
-    ],
-    "DEFAULT_RENDERER_CLASSES": [
+    ),
+    "DEFAULT_PERMISSION_CLASSES": (
+        "rest_framework.permissions.IsAuthenticated",
+    ),
+    "DEFAULT_RENDERER_CLASSES": (
         "rest_framework.renderers.JSONRenderer",
-        "rest_framework.renderers.BrowsableAPIRenderer",
-    ],
+    ),
+    "DEFAULT_PARSER_CLASSES": (
+        "rest_framework.parsers.JSONParser",
+        "rest_framework.parsers.FormParser",
+        "rest_framework.parsers.MultiPartParser",
+    ),
 }
-
-# ---------------------------------------------------------------------------
-# Simple JWT
-# ---------------------------------------------------------------------------
-from datetime import timedelta  # noqa: E402
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
-    "BLACKLIST_AFTER_ROTATION": True,
-    "UPDATE_LAST_LOGIN": True,
+    "BLACKLIST_AFTER_ROTATION": False,
     "AUTH_HEADER_TYPES": ("Bearer",),
+    "USER_ID_FIELD": "id",
+    "USER_ID_CLAIM": "user_id",
 }
 
-# ---------------------------------------------------------------------------
-# Jazzmin — styled Django admin
-# ---------------------------------------------------------------------------
-JAZZMIN_SETTINGS = {
-    "site_title": "Blog Admin",
-    "site_header": "Blog Studio",
-    "site_brand": "Blog Studio",
-    "site_logo": None,
-    "welcome_sign": "Welcome to the Blog Studio admin panel",
-    "copyright": "Blog Studio",
-    "search_model": ["blog.Post", "blog.Category"],
-    "topmenu_links": [
-        {"name": "View Site", "url": "http://localhost:3000", "new_window": True},
-        {"model": "blog.Post"},
-        {"app": "blog"},
-    ],
-    "show_sidebar": True,
-    "navigation_expanded": True,
-    "icons": {
-        "auth": "fas fa-users-cog",
-        "auth.user": "fas fa-user",
-        "auth.Group": "fas fa-users",
-        "blog.Post": "fas fa-newspaper",
-        "blog.Category": "fas fa-folder",
-        "blog.Tag": "fas fa-tags",
-        "blog.Comment": "fas fa-comments",
-    },
-    "default_icon_parents": "fas fa-chevron-circle-right",
-    "default_icon_children": "fas fa-circle",
-    "related_modal_active": True,
-    "custom_css": "admin/css/custom_admin.css",
-    "show_ui_builder": True,
-}
+# ---------------- CORS / CSRF ----------------
+# Includes the LAN IP so the frontend can also be reached at
+# http://192.168.0.104:3000 (e.g. testing from another device on the network).
+CORS_ALLOWED_ORIGINS = config(
+    "CORS_ALLOWED_ORIGINS",
+    default=f"{FRONTEND_URL},https://full-stack-django-nextjs-otpwithjwt.vercel.app,http://192.168.0.120:3000",
+    cast=Csv(),
+)
+CORS_ALLOW_CREDENTIALS = True
+CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
 
-JAZZMIN_UI_TWEAKS = {
-    "navbar_small_text": False,
-    "footer_small_text": False,
-    "body_small_text": False,
-    "brand_small_text": False,
-    "brand_colour": "navbar-indigo",
-    "accent": "accent-indigo",
-    "navbar": "navbar-indigo navbar-dark",
-    "no_navbar_border": False,
-    "navbar_fixed": True,
-    "layout_boxed": False,
-    "footer_fixed": False,
-    "sidebar_fixed": True,
-    "sidebar": "sidebar-dark-indigo",
-    "sidebar_nav_small_text": False,
-    "sidebar_disable_expand": False,
-    "sidebar_nav_child_indent": True,
-    "sidebar_nav_compact_style": False,
-    "sidebar_nav_legacy_style": False,
-    "sidebar_nav_flat_style": False,
-    "theme": "flatly",
-    "dark_mode_theme": None,
-    "button_classes": {
-        "primary": "btn-primary",
-        "secondary": "btn-secondary",
-        "info": "btn-info",
-        "warning": "btn-warning",
-        "danger": "btn-danger",
-        "success": "btn-success",
-    },
-}
+# ---------------- EMAIL (Gmail SMTP) ----------------
+EMAIL_BACKEND = config("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = config("EMAIL_HOST", default="smtp.gmail.com")
+EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
+EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
+EMAIL_HOST_USER = 'rajkumararyal0977@gmail.com'
+EMAIL_HOST_PASSWORD = 'pnierfurujtkbsbe'
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default=EMAIL_HOST_USER)
+
+# If no Gmail creds are set, fall back to printing emails to the console
+# so registration still works during local development.
+if not EMAIL_HOST_USER or not EMAIL_HOST_PASSWORD:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+OTP_EXPIRY_MINUTES = config("OTP_EXPIRY_MINUTES", default=10, cast=int)
+
+# ---------------- Auth redirects ----------------
+# NOTE: this project's login is a JWT REST API (see accounts/urls.py), not
+# Django's session-based auth views, so these two settings aren't consulted
+# anywhere in the current flow. They're included because you asked for them
+# and are harmless to have set — but if you want a traditional server-rendered
+# login/redirect (e.g. for the Django admin app under a custom namespace),
+# you'd need to add a URL named "otp_auth:login" and "otp_auth:success" for
+# these to resolve correctly.
+LOGIN_URL = config("LOGIN_URL", default="otp_auth:login")
+LOGIN_REDIRECT_URL = config("LOGIN_REDIRECT_URL", default="otp_auth:success")

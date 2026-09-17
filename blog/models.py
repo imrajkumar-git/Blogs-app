@@ -1,117 +1,106 @@
+import os
+
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
-from django.utils import timezone
 from django.utils.text import slugify
 
 
-class Category(models.Model):
-    name = models.CharField(max_length=100, unique=True)
-    slug = models.SlugField(max_length=120, unique=True, blank=True)
-    description = models.TextField(blank=True)
-
-    class Meta:
-        verbose_name_plural = "Categories"
-        ordering = ["name"]
-
-    def __str__(self):
-        return self.name
-
-    def save(self, *args, **kwargs):
-        if not self.slug:
-            self.slug = slugify(self.name)
-        super().save(*args, **kwargs)
+def blog_cover_path(instance, filename):
+    """Store covers under media/blog_covers/<author id>/<filename>."""
+    base, ext = os.path.splitext(filename)
+    safe = slugify(base)[:60] or "cover"
+    return f"blog_covers/{instance.author_id or 'unassigned'}/{safe}{ext.lower()}"
 
 
-class Tag(models.Model):
-    name = models.CharField(max_length=50, unique=True)
-    slug = models.SlugField(max_length=60, unique=True, blank=True)
-
-    class Meta:
-        ordering = ["name"]
-
-    def __str__(self):
-        return self.name
-
-    def save(self, *args, **kwargs):
-        if not self.slug:
-            self.slug = slugify(self.name)
-        super().save(*args, **kwargs)
+def validate_cover_image(file):
+    """Keep uploads to a sane size and to real image formats."""
+    max_bytes = getattr(settings, "BLOG_COVER_MAX_BYTES", 5 * 1024 * 1024)
+    if file.size > max_bytes:
+        raise ValidationError(
+            f"Cover image must be {max_bytes // (1024 * 1024)}MB or smaller."
+        )
+    ext = os.path.splitext(file.name)[1].lower()
+    allowed = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"}
+    if ext not in allowed:
+        raise ValidationError(
+            "Unsupported image type. Use JPG, PNG, WEBP, GIF or AVIF."
+        )
 
 
 class Post(models.Model):
-    class Status(models.TextChoices):
-        DRAFT = "draft", "Draft"
-        PUBLISHED = "published", "Published"
-
-    title = models.CharField(max_length=220)
-    slug = models.SlugField(max_length=250, unique=True, blank=True)
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="posts"
     )
-    category = models.ForeignKey(
-        Category, on_delete=models.SET_NULL, null=True, blank=True, related_name="posts"
-    )
-    tags = models.ManyToManyField(Tag, blank=True, related_name="posts")
-
-    excerpt = models.CharField(
-        max_length=300, blank=True, help_text="Short summary shown on listing pages."
-    )
+    title = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=220, unique=True, blank=True)
+    excerpt = models.CharField(max_length=300, blank=True)
     content = models.TextField()
-    featured_image = models.ImageField(
-        upload_to="posts/%Y/%m/", blank=True, null=True
+    # Two ways to give a post a cover:
+    #   cover_image      — a file uploaded from the author's device (preferred)
+    #   cover_image_url  — an external URL, kept for existing posts
+    cover_image = models.ImageField(
+        upload_to=blog_cover_path,
+        blank=True,
+        null=True,
+        validators=[validate_cover_image],
     )
-
-    status = models.CharField(
-        max_length=10, choices=Status.choices, default=Status.DRAFT
-    )
-    is_featured = models.BooleanField(default=False)
-    views_count = models.PositiveIntegerField(default=0)
-
+    cover_image_url = models.URLField(blank=True)
+    is_published = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    published_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        ordering = ["-published_at", "-created_at"]
-        indexes = [
-            models.Index(fields=["-published_at"]),
-            models.Index(fields=["slug"]),
-        ]
-
-    def __str__(self):
-        return self.title
-
-    def save(self, *args, **kwargs):
-        if not self.slug:
-            base_slug = slugify(self.title)
-            slug = base_slug
-            counter = 1
-            while Post.objects.filter(slug=slug).exclude(pk=self.pk).exists():
-                counter += 1
-                slug = f"{base_slug}-{counter}"
-            self.slug = slug
-
-        if self.status == self.Status.PUBLISHED and self.published_at is None:
-            self.published_at = timezone.now()
-
-        super().save(*args, **kwargs)
-
-    @property
-    def reading_time_minutes(self):
-        word_count = len(self.content.split())
-        return max(1, round(word_count / 200))
-
-
-class Comment(models.Model):
-    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="comments")
-    name = models.CharField(max_length=100)
-    email = models.EmailField()
-    content = models.TextField()
-    is_approved = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["-created_at"]
 
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base = slugify(self.title)[:200] or "post"
+            slug = base
+            i = 1
+            while Post.objects.filter(slug=slug).exclude(pk=self.pk).exists():
+                i += 1
+                slug = f"{base}-{i}"
+            self.slug = slug
+        super().save(*args, **kwargs)
+
+    @property
+    def cover_source(self):
+        """The image the site should actually render, upload taking priority."""
+        if self.cover_image:
+            return self.cover_image.url
+        return self.cover_image_url or ""
+
     def __str__(self):
-        return f"Comment by {self.name} on {self.post.title}"
+        return self.title
+
+
+class Like(models.Model):
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="likes")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="post_likes"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["post", "user"], name="unique_post_like")
+        ]
+
+    def __str__(self):
+        return f"{self.user} likes {self.post}"
+
+
+class Comment(models.Model):
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="comments")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="comments"
+    )
+    content = models.TextField(max_length=1000)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"Comment by {self.user} on {self.post}"
